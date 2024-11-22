@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 from model import UWCNN_Enhanced
 
+
 def rgb_to_lab(image):
     return image.convert('LAB')
 
@@ -16,7 +17,7 @@ def process_images(model_path, input_dir, output_dir, device):
     os.makedirs(output_dir, exist_ok=True)
 
     model = UWCNN_Enhanced()
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.to(device)
     model.eval()
 
@@ -32,24 +33,17 @@ def process_images(model_path, input_dir, output_dir, device):
             if img_name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')):
                 img = Image.open(img_path).convert('RGB')
 
-                # Multi-Color Space Transformation
-                img_lab = rgb_to_lab(img)
-                img_hsv = rgb_to_hsv(img)
-
+                # Use only RGB channels as the model expects 3 channels
                 img_rgb = transform(img).unsqueeze(0).to(device)
-                img_lab = transform(img_lab).unsqueeze(0).to(device)
-                img_hsv = transform(img_hsv).unsqueeze(0).to(device)
 
-                # Concatenate color space representations
-                img_input = torch.cat([img_rgb, img_lab, img_hsv], dim=1)
-
-                output = model(img_input)
+                output = model(img_rgb)
                 output = output.squeeze(0).cpu()
                 output_image = transforms.ToPILImage()(output.clamp(0, 1))
 
                 output_image.save(os.path.join(output_dir, img_name))
             else:
                 print(f"Skipping non-image file: {img_name}")
+
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

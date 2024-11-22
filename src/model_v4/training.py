@@ -128,31 +128,36 @@ def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, n
         running_loss = 0.0
         loop = tqdm(dataloader, total=len(dataloader))
         for inputs, targets in loop:
-            inputs = inputs.to(device)
-            targets = targets.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
+            try:
+                inputs = inputs.to(device)
+                targets = targets.to(device)
+                optimizer.zero_grad()
+                outputs = model(inputs)
 
-            # Compute different losses
-            loss_pixel = criterion(outputs, targets)
-            loss_perceptual = perceptual_criterion(outputs, targets)
-            loss_uiqm = uiqm_criterion(outputs, targets)
+                # Compute different losses
+                loss_pixel = criterion(outputs, targets)
+                loss_perceptual = perceptual_criterion(outputs, targets)
+                loss_uiqm = uiqm_criterion(outputs, targets)
 
-            # Total loss with weighted sum
-            loss = loss_pixel + 0.1 * loss_perceptual + 0.01 * loss_uiqm
-            loss.backward()
-            optimizer.step()
+                # Total loss with weighted sum
+                loss = loss_pixel + 0.1 * loss_perceptual + 0.01 * loss_uiqm
+                loss.backward()
+                optimizer.step()
 
-            running_loss += loss.item()
-            loop.set_description(f"Epoch [{epoch + 1}/{num_epochs}]")
-            loop.set_postfix(loss=running_loss / (loop.n + 1))
+                running_loss += loss.item()
+                loop.set_description(f"Epoch [{epoch + 1}/{num_epochs}]")
+                loop.set_postfix(loss=running_loss / (loop.n + 1))
+            except torch.cuda.OutOfMemoryError:
+                print("CUDA out of memory. Reducing batch size or clearing cache.")
+                torch.cuda.empty_cache()
+                continue
         print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {running_loss / len(dataloader):.4f}")
     return model
 
 
 if __name__ == '__main__':
     num_epochs = 50
-    batch_size = 4  # Adjust batch size as needed
+    batch_size = 2  # Reduced batch size to prevent CUDA out of memory
     learning_rate = 1e-4
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

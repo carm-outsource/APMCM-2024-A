@@ -1,15 +1,14 @@
-import cv2
-import numpy as np
 import os
-import pandas as pd
+
+import cv2
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # Import 3D plotting toolkit
-from matplotlib import cm  # Import colormap functionalities
+import numpy as np
+import pandas as pd
 
 # Constants
-DATASET_FOLDER = 'resources/a/'  # Replace with your image folder path
-OUTPUT_EXCEL = 'result/result4.xlsx'  # Output xlsx file name
-OUTPUT_IMAGE = 'result/plot4.png'  # Output image file name
+DATASET_FOLDER = 'resources/Attachment-1/'  # Replace with your image folder path
+OUTPUT_EXCEL = 'output/result.xlsx'  # Output xlsx file name
+OUTPUT_IMAGE = 'output/plot.png'  # Output image file name
 
 # Read image files with these extensions
 IMG_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff']
@@ -83,9 +82,9 @@ def blur_metric(img):
 
     if edge_density >= EDGE_DENSITY_THRESHOLD:
         # High edge density, use Tenengrad method
-        Gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        Gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        blur = np.mean(Gx ** 2 + Gy ** 2)
+        gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        blur = np.mean(gx ** 2 + gy ** 2)
     else:
         # Low edge density, use gray level variance
         blur = np.std(gray)
@@ -133,8 +132,9 @@ def process_images(folder_path, output_excel, output_image):
 
     print(f"Results saved to {output_excel}")
 
-    print("Generating 3D scatter plot ...")
-    plot_3d_scatter(df, output_image)
+    if output_image is not None:
+        print("Generating 3D scatter plot ...")
+        plot_3d_scatter(df, output_image)
 
 
 def plot_3d_scatter(df, output_image):
@@ -174,9 +174,6 @@ def plot_3d_scatter(df, output_image):
 
     # Display grid lines
     ax.grid(True)
-
-    # Show the plot
-    # plt.show()
 
     # Save the plot as an image
     fig.savefig(output_image, dpi=300, bbox_inches='tight')

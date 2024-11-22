@@ -1,5 +1,13 @@
 # APMCM-2024 Problem A
 
+## Introduction
+
+This repository contains the source code and documentation for the problem A 
+of the **Asia-Pacific Mathematical Contest in Modeling** (APMCM) 2024.
+
+The problem is about underwater image enhancement in complex scenarios.
+The problem statement is provided below.
+
 ## Problem Statement
 
 **Research on Underwater Image Enhancement in Complex Scenarios**
@@ -180,4 +188,13 @@ Image Quality Measures,"** in IEEE Journal of Oceanic Engineering, vol. 41, no. 
 - [9]. M. Yang and A. Sowmya, **"An Underwater Color Image Quality Evaluation Metric,"**
 in IEEE Transactions on Image Processing, vol. 24, no. 12, pp. 6062-6071, Dec. 2015, doi:
 10.1109/TIP.2015.2491020.
+
+## Open Source Licence
+
+The source code of this project adopts the [GNU General Public License v3.0](https://opensource.org/licenses/GPL-3.0).
+
+## Supports
+
+Many thanks to Jetbrains for kindly providing a license for us to work on this and other open-source projects.  
+[![](https://resources.jetbrains.com/storage/products/company/brand/logos/jb_beam.svg)](https://www.jetbrains.com/?from=https://github.com/carm-outsource/APMCM-2024-A)
 

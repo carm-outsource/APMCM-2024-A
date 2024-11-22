@@ -1,4 +1,3 @@
-# training.py - Updated Training Script with Advanced Loss Functions
 import os
 import torch
 import torch.nn as nn
@@ -10,14 +9,16 @@ from PIL import Image
 from model import UWCNN_Enhanced
 import torch.nn.functional as F
 from torchvision.transforms import functional as TF
-from torchvision.models import VGG16_Weights
+from torchvision.models import VGG19_Weights
 import numpy as np
-
+from torch.optim.lr_scheduler import StepLR
+from torch.amp import GradScaler, autocast
+from torchmetrics.image import StructuralSimilarityIndexMeasure
 
 class PerceptualLoss(nn.Module):
     def __init__(self):
         super(PerceptualLoss, self).__init__()
-        vgg = models.vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features[:16]
+        vgg = models.vgg19(weights=VGG19_Weights.IMAGENET1K_V1).features[:16]
         for param in vgg.parameters():
             param.requires_grad = False
         self.vgg = vgg
@@ -121,50 +122,72 @@ def uiqm_criterion(output, target):
     return loss
 
 
-def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, num_epochs, device):
+def ssim_loss(output, target):
+    ssim = torchmetrics.StructuralSimilarityIndexMeasure().to(output.device)
+    return 1 - ssim(output, target)
+
+
+def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, num_epochs, device,
+                accumulation_steps=4):
     model.to(device)
+    scaler = GradScaler('cuda')
+    scheduler = StepLR(optimizer, step_size=10, gamma=0.5)
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
         loop = tqdm(dataloader, total=len(dataloader))
-        for inputs, targets in loop:
+        optimizer.zero_grad()
+        for i, (inputs, targets) in enumerate(loop):
             try:
                 inputs = inputs.to(device)
                 targets = targets.to(device)
-                optimizer.zero_grad()
-                outputs = model(inputs)
 
-                # Compute different losses
-                loss_pixel = criterion(outputs, targets)
-                loss_perceptual = perceptual_criterion(outputs, targets)
-                loss_uiqm = uiqm_criterion(outputs, targets)
+                with autocast('cuda'):
+                    outputs = model(inputs)
+                    loss_pixel = criterion(outputs, targets)
+                    loss_perceptual = perceptual_criterion(outputs, targets)
+                    loss_uiqm = uiqm_criterion(outputs, targets)
+                    loss_ssim = ssim_loss(outputs, targets)
 
-                # Total loss with weighted sum
-                loss = loss_pixel + 0.1 * loss_perceptual + 0.01 * loss_uiqm
-                loss.backward()
-                optimizer.step()
+                    # Total loss with weighted sum
+                    loss = loss_pixel + 0.5 * loss_perceptual + 0.1 * loss_uiqm + 0.1 * loss_ssim
+                    loss = loss / accumulation_steps
 
-                running_loss += loss.item()
+                scaler.scale(loss).backward()
+
+                # Gradient accumulation
+                if (i + 1) % accumulation_steps == 0:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+
+                running_loss += loss.item() * accumulation_steps
                 loop.set_description(f"Epoch [{epoch + 1}/{num_epochs}]")
-                loop.set_postfix(loss=running_loss / (loop.n + 1))
+                loop.set_postfix(loss=running_loss / (i + 1))
+
             except torch.cuda.OutOfMemoryError:
                 print("CUDA out of memory. Reducing batch size or clearing cache.")
                 torch.cuda.empty_cache()
                 continue
+
+        scheduler.step()
         print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {running_loss / len(dataloader):.4f}")
     return model
 
 
 if __name__ == '__main__':
-    num_epochs = 50
+    num_epochs = 100
     batch_size = 2  # Reduced batch size to prevent CUDA out of memory
-    learning_rate = 1e-4
+    learning_rate = 0.0002
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_input_dir = 'data/train/input/'
     train_target_dir = 'data/train/target/'
 
     transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(10),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.ToTensor(),
     ])
 
@@ -179,4 +202,4 @@ if __name__ == '__main__':
     model = train_model(model, train_loader, criterion, perceptual_criterion, optimizer, num_epochs, device)
 
     os.makedirs('models', exist_ok=True)
-    torch.save(model.state_dict(), 'models/uwcnn_enhanced.pth')
+    torch.save(model.state_dict(), 'models/uwcnn_v4.pth')

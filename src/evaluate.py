@@ -9,8 +9,8 @@ from tqdm import tqdm
 from skimage import color
 
 SOURCE_FOLDER = 'data/test/input'
-TARGET_FOLDER = 'output/v3'
-RESULT_OUTPUT = 'output/image_quality_metrics.csv'
+TARGET_FOLDER = 'output/v5'
+RESULT_OUTPUT = 'output/image_quality_metrics-v5.csv'
 
 
 def calculate_uciqe(image):

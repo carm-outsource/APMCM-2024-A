@@ -9,6 +9,68 @@ from PIL import Image
 from model import ImprovedUWCNN
 import torch.nn.functional as F
 from torchvision.transforms import functional as TF
+import numpy as np
+import cv2
+
+def calculate_uiqm(image_tensor):
+    """
+    Calculate the UIQM (Underwater Image Quality Measure) for a given image.
+    Args:
+        image_tensor (torch.Tensor): Input image tensor with shape (B, C, H, W) or (C, H, W), values in range [0, 1].
+    Returns:
+        float: UIQM value.
+    """
+    if len(image_tensor.shape) == 4:
+        image_tensor = image_tensor[0]  # Use the first image in the batch if batch dimension is present
+    image_tensor = torch.clamp(image_tensor, 0, 1)  # Ensure values are in [0, 1]
+    image = image_tensor.permute(1, 2, 0).detach().cpu().numpy() * 255  # Convert to HWC format, detach, and scale to [0, 255]
+    image = image.astype(np.float32)
+
+    # UICM (Colorfulness measure)
+    rg = image[:, :, 0] - image[:, :, 1]
+    yb = 0.5 * (image[:, :, 0] + image[:, :, 1]) - image[:, :, 2]
+    uicm = np.sqrt(np.mean(rg ** 2) + np.mean(yb ** 2))
+
+    # UISM (Sharpness measure)
+    uism = np.mean(np.abs(np.gradient(image[:, :, 0])) + np.abs(np.gradient(image[:, :, 1])) + np.abs(np.gradient(image[:, :, 2])))
+
+    # UIConM (Contrast measure)
+    ui_contrast = image.max() - image.min()
+    uiconm = ui_contrast / 255.0
+
+    # Combining the three measures
+    uiqm_value = 0.0282 * uicm + 0.2953 * uism + 3.5753 * uiconm
+    return uiqm_value
+
+def calculate_uciqe(image_tensor):
+    """
+    Calculate the UCIQE (Underwater Color Image Quality Evaluation) for a given image.
+    Args:
+        image_tensor (torch.Tensor): Input image tensor with shape (B, C, H, W) or (C, H, W), values in range [0, 1].
+    Returns:
+        float: UCIQE value.
+    """
+    if len(image_tensor.shape) == 4:
+        image_tensor = image_tensor[0]  # Use the first image in the batch if batch dimension is present
+    image_tensor = torch.clamp(image_tensor, 0, 1)  # Ensure values are in [0, 1]
+    image = image_tensor.permute(1, 2, 0).detach().cpu().numpy() * 255  # Convert to HWC format, detach, and scale to [0, 255]
+    image = image.astype(np.float32)
+
+    # UCIQE calculation
+    lab_image = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab_image)
+
+    # Contrast of luminance
+    l_contrast = np.std(l_channel)
+
+    # Chromaticity spread
+    chroma = np.sqrt(a_channel ** 2 + b_channel ** 2)
+    chroma_mean = np.mean(chroma)
+    chroma_std = np.std(chroma)
+
+    # Combine metrics
+    uciqe_value = 0.4680 * l_contrast + 0.2745 * chroma_std + 0.2576 * chroma_mean
+    return uciqe_value
 
 
 class PerceptualLoss(nn.Module):
@@ -76,6 +138,7 @@ def collate_fn(batch):
 
 def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, num_epochs, device):
     model.to(device)
+    scaler = torch.amp.GradScaler()  # Use mixed precision training to reduce memory usage
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -85,12 +148,17 @@ def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, n
             targets = targets.to(device)
             optimizer.zero_grad()
             try:
-                outputs = model(inputs)
-                loss_pixel = criterion(outputs, targets)
-                loss_perceptual = perceptual_criterion(outputs, targets)
-                loss = loss_pixel + 0.1 * loss_perceptual
-                loss.backward()
-                optimizer.step()
+                with torch.amp.autocast(device_type=device.type):
+                    outputs = model(inputs)
+                    outputs = torch.clamp(outputs, 0, 1)  # Clamp outputs to ensure they are in the range [0, 1]
+                    loss_pixel = criterion(outputs, targets)
+                    loss_perceptual = perceptual_criterion(outputs, targets)
+                    loss_uciqe = -calculate_uciqe(outputs)  # Minimize negative UCIQE to maximize quality
+                    loss_uiqm = -calculate_uiqm(outputs)  # Minimize negative UIQM to maximize quality
+                    loss = loss_pixel + 0.1 * loss_perceptual + 0.05 * loss_uciqe + 0.01 * loss_uiqm
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
                 running_loss += loss.item()
             except RuntimeError as e:
                 if 'out of memory' in str(e):
@@ -105,8 +173,8 @@ def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, n
 
 
 if __name__ == '__main__':
-    num_epochs = 100
-    batch_size = 2  # Reduced batch size to fit in memory
+    num_epochs = 10
+    batch_size = 2
     learning_rate = 1e-4
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -128,4 +196,4 @@ if __name__ == '__main__':
     model = train_model(model, train_loader, criterion, perceptual_criterion, optimizer, num_epochs, device)
 
     os.makedirs('models', exist_ok=True)
-    torch.save(model.state_dict(), 'models/uwcnn_v5.pth')
+    torch.save(model.state_dict(), 'models/uwcnn_v7.pth')

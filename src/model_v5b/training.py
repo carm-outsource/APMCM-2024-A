@@ -9,6 +9,37 @@ from PIL import Image
 from model import ImprovedUWCNN
 import torch.nn.functional as F
 from torchvision.transforms import functional as TF
+import numpy as np
+
+def calculate_uiqm(image_tensor):
+    """
+    Calculate the UIQM (Underwater Image Quality Measure) for a given image.
+    Args:
+        image_tensor (torch.Tensor): Input image tensor with shape (B, C, H, W) or (C, H, W), values in range [0, 1].
+    Returns:
+        float: UIQM value.
+    """
+    if len(image_tensor.shape) == 4:
+        image_tensor = image_tensor[0]  # Use the first image in the batch if batch dimension is present
+    image_tensor = torch.clamp(image_tensor, 0, 1)  # Ensure values are in [0, 1]
+    image = image_tensor.permute(1, 2, 0).detach().cpu().numpy() * 255  # Convert to HWC format, detach, and scale to [0, 255]
+    image = image.astype(np.float32)
+
+    # UICM (Colorfulness measure)
+    rg = image[:, :, 0] - image[:, :, 1]
+    yb = 0.5 * (image[:, :, 0] + image[:, :, 1]) - image[:, :, 2]
+    uicm = np.sqrt(np.mean(rg ** 2) + np.mean(yb ** 2))
+
+    # UISM (Sharpness measure)
+    uism = np.mean(np.abs(np.gradient(image[:, :, 0])) + np.abs(np.gradient(image[:, :, 1])) + np.abs(np.gradient(image[:, :, 2])))
+
+    # UIConM (Contrast measure)
+    ui_contrast = image.max() - image.min()
+    uiconm = ui_contrast / 255.0
+
+    # Combining the three measures
+    uiqm_value = 0.0282 * uicm + 0.2953 * uism + 3.5753 * uiconm
+    return uiqm_value
 
 
 class PerceptualLoss(nn.Module):
@@ -51,7 +82,6 @@ class UnderwaterDataset(torch.utils.data.Dataset):
 
 def collate_fn(batch):
     inputs, targets = zip(*batch)
-    # Get max height and width in this batch
     max_height = max([img.shape[1] for img in inputs])
     max_width = max([img.shape[2] for img in inputs])
 
@@ -59,10 +89,8 @@ def collate_fn(batch):
     padded_targets = []
 
     for img_in, img_tgt in zip(inputs, targets):
-        # Calculate padding sizes
         pad_width = max_width - img_in.shape[2]
         pad_height = max_height - img_in.shape[1]
-        # Padding format: (left, top, right, bottom)
         padding = (0, 0, pad_width, pad_height)
         pad_in = TF.pad(img_in, padding)
         pad_tgt = TF.pad(img_tgt, padding)
@@ -75,7 +103,9 @@ def collate_fn(batch):
 
 
 def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, num_epochs, device):
+    model = nn.DataParallel(model)  # Wrap the model with DataParallel to use multiple GPUs
     model.to(device)
+    scaler = torch.amp.GradScaler()  # Use mixed precision training to reduce memory usage
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -85,12 +115,16 @@ def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, n
             targets = targets.to(device)
             optimizer.zero_grad()
             try:
-                outputs = model(inputs)
-                loss_pixel = criterion(outputs, targets)
-                loss_perceptual = perceptual_criterion(outputs, targets)
-                loss = loss_pixel + 0.1 * loss_perceptual
-                loss.backward()
-                optimizer.step()
+                with torch.amp.autocast(device_type=device.type):
+                    outputs = model(inputs)
+                    outputs = torch.clamp(outputs, 0, 1)
+                    loss_pixel = criterion(outputs, targets)
+                    loss_perceptual = perceptual_criterion(outputs, targets)
+                    loss_uiqm = -calculate_uiqm(outputs)  # Minimize negative UIQM to maximize quality
+                    loss = loss_pixel + 0.1 * loss_perceptual + 0.01 * loss_uiqm
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
                 running_loss += loss.item()
             except RuntimeError as e:
                 if 'out of memory' in str(e):
@@ -106,7 +140,7 @@ def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, n
 
 if __name__ == '__main__':
     num_epochs = 100
-    batch_size = 2  # Reduced batch size to fit in memory
+    batch_size = 4
     learning_rate = 1e-4
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -128,4 +162,4 @@ if __name__ == '__main__':
     model = train_model(model, train_loader, criterion, perceptual_criterion, optimizer, num_epochs, device)
 
     os.makedirs('models', exist_ok=True)
-    torch.save(model.state_dict(), 'models/uwcnn_v5.pth')
+    torch.save(model.state_dict(), 'models/uwcnn_v5b.pth')

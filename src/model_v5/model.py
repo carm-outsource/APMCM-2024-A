@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class ConvBlock(nn.Module):
     """Basic convolutional block with convolution, batch normalization, and activation"""
+
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, activation='relu'):
         super(ConvBlock, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
@@ -21,63 +23,73 @@ class ConvBlock(nn.Module):
         out = self.act(out)
         return out
 
-class AttentionBlock(nn.Module):
-    """Attention mechanism to prioritize important features"""
+
+class EFED(nn.Module):
+    """Efficient Fusion Edge Detection module to preserve important edge details."""
+
     def __init__(self, in_channels):
-        super(AttentionBlock, self).__init__()
-        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(in_channels, in_channels // 8, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(in_channels // 8, in_channels, bias=False),
-            nn.Sigmoid()
-        )
+        super(EFED, self).__init__()
+        self.edge_conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.global_avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
+        edge_features = self.edge_conv(x)
+        edge_features = self.relu(edge_features)
+        return edge_features
 
-class UWCNN_Enhanced(nn.Module):
+
+class MCPFA(nn.Module):
+    """Multi-scale Color Parallel Frequency Attention module."""
+
+    def __init__(self, in_channels):
+        super(MCPFA, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.conv2 = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
+        self.attention = nn.Sigmoid()
+
+    def forward(self, x):
+        low_freq = self.conv1(x)
+        high_freq = self.conv2(x)
+        combined = low_freq + high_freq
+        attention_map = self.attention(combined)
+        return x * attention_map
+
+
+class ImprovedUWCNN(nn.Module):
     def __init__(self, num_channels=3):
-        super(UWCNN_Enhanced, self).__init__()
+        super(ImprovedUWCNN, self).__init__()
         # Color correction branch
         self.color_branch = nn.Sequential(
             ConvBlock(num_channels, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
+            MCPFA(64),
             ConvBlock(64, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
             ConvBlock(64, num_channels, kernel_size=3, padding=1, activation=None)
         )
         # Light enhancement branch
         self.light_branch = nn.Sequential(
             ConvBlock(num_channels, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
+            MCPFA(64),
             ConvBlock(64, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
             ConvBlock(64, num_channels, kernel_size=3, padding=1, activation=None)
         )
         # Sharpness enhancement branch
         self.sharp_branch = nn.Sequential(
             ConvBlock(num_channels, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
+            EFED(64),
             ConvBlock(64, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
             ConvBlock(64, num_channels, kernel_size=3, padding=1, activation=None)
         )
         # Dehazing branch
         self.dehaze_branch = nn.Sequential(
             ConvBlock(num_channels, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
+            MCPFA(64),
             ConvBlock(64, 64, kernel_size=3, padding=1),
-            AttentionBlock(64),
             ConvBlock(64, num_channels, kernel_size=3, padding=1, activation=None)
         )
-        # Feature fusion layer with attention
+        # Feature fusion layer with attention mechanism
         self.fusion = nn.Sequential(
             ConvBlock(num_channels * 4, 64, kernel_size=1, padding=0),
-            AttentionBlock(64),
+            MCPFA(64),
             ConvBlock(64, num_channels, kernel_size=3, padding=1, activation=None)
         )
         # Residual connection

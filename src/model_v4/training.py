@@ -123,7 +123,7 @@ def uiqm_criterion(output, target):
 
 
 def ssim_loss(output, target):
-    ssim = torchmetrics.StructuralSimilarityIndexMeasure().to(output.device)
+    ssim = StructuralSimilarityIndexMeasure().to(output.device)
     return 1 - ssim(output, target)
 
 
@@ -150,7 +150,7 @@ def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, n
                     loss_ssim = ssim_loss(outputs, targets)
 
                     # Total loss with weighted sum
-                    loss = loss_pixel + 0.5 * loss_perceptual + 0.1 * loss_uiqm + 0.1 * loss_ssim
+                    loss = loss_pixel + 0.2 * loss_perceptual + 0.025 * loss_uiqm + 0.1 * loss_ssim
                     loss = loss / accumulation_steps
 
                 scaler.scale(loss).backward()
@@ -177,7 +177,7 @@ def train_model(model, dataloader, criterion, perceptual_criterion, optimizer, n
 
 if __name__ == '__main__':
     num_epochs = 100
-    batch_size = 2  # Reduced batch size to prevent CUDA out of memory
+    batch_size = 3  # Reduced batch size to prevent CUDA out of memory
     learning_rate = 0.0002
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
